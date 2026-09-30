@@ -5,3 +5,4 @@ coverage/
 .env
 .env.*
 verification.local.json
+__pycache__/

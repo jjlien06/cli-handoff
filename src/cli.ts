@@ -6,13 +6,15 @@ import { doctor, hook, install, uninstall } from './integrations.ts';
 import { providerName, sessions } from './adapters.ts';
 import { canonical, dataRoot, index, selectRevision, unlock } from './store.ts';
 import { serve } from './mcp.ts';
+import { startTerminal, switchHandoff } from './switch.ts';
 
-const help = `handoff — continue work between native Codex CLI and Claude Code\n\nUsage:\n  handoff install                     Install native skills and identity hooks\n  handoff prepare --provider NAME     Create a checkpoint draft for this exact session\n  handoff export --provider NAME --checkpoint FILE [--session ID]\n  handoff import [ID] --provider NAME  Read a pending handoff and compare live files\n  handoff ack ID --provider NAME [--session ID]\n  handoff open claude|codex [ID]       Launch the native CLI with an import prompt\n  handoff status                      List saved handoffs in this directory\n  handoff sessions --provider NAME     List exact native session IDs for this directory\n  handoff history ID [--query TEXT] [--offset N] [--limit N]\n  handoff doctor                      Check installation and native CLI availability\n  handoff unlock                      Remove a lock only if its owner process is gone\n  handoff uninstall                   Remove owned integration files; keep archives\n\nCommon options: --cwd PATH, --session ID, --json\nExport options: --transcript PATH (legacy/testing), --task ID (explicit existing task)\n\nClaude: /export-sync and /import-sync\nCodex: $export-sync and $import-sync (select the skill from the native picker)\nYou can also say “export-sync” or “continue from the synced conversation.”\n`;
+const help = `handoff — continue work between native Codex CLI and Claude Code\n\nUsage:\n  handoff start claude|codex [-- ARGS]  Start a session with same-terminal switching\n  handoff switch [claude|codex] --provider NAME --checkpoint FILE [--session ID]\n  handoff install                     Install native skills and identity hooks\n  handoff prepare --provider NAME     Create a checkpoint draft for this exact session\n  handoff export --provider NAME --checkpoint FILE [--session ID]\n  handoff import [ID] --provider NAME  Read a pending handoff and compare live files\n  handoff ack ID --provider NAME [--session ID]\n  handoff open claude|codex [ID]       Launch the native CLI with an import prompt\n  handoff status                      List saved handoffs in this directory\n  handoff sessions --provider NAME     List exact native session IDs for this directory\n  handoff history ID [--query TEXT] [--offset N] [--limit N]\n  handoff doctor                      Check installation and native CLI availability\n  handoff unlock                      Remove a lock only if its owner process is gone\n  handoff uninstall                   Remove owned integration files; keep archives\n\nCommon options: --cwd PATH, --session ID, --json\nExport options: --transcript PATH (legacy/testing), --task ID (explicit existing task)\n\nClaude: /export-sync and /import-sync\nCodex: $export-sync and $import-sync (select the skill from the native picker)\nYou can also say “export-sync” or “continue from the synced conversation.”\n`;
 function parse(args: string[]) {
   const flags: Record<string, any> = {}; const positional: string[] = [];
   const booleans = new Set(['json', 'help']);
   const known = new Set(['provider', 'cwd', 'session', 'checkpoint', 'transcript', 'task', 'query', 'offset', 'limit']);
   for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--') { flags.nativeArgs = args.slice(i + 1); break; }
     if (args[i] === '-h') { flags.help = true; continue; }
     if (!args[i].startsWith('--')) { positional.push(args[i]); continue; }
     const key = args[i].slice(2);
@@ -36,6 +38,12 @@ async function main() {
     case 'uninstall': output(uninstall()); break;
     case 'doctor': output(doctor()); break;
     case 'mcp': serve(providerName(f.provider)); break;
+    case 'start': await startTerminal(providerName(p[0]), cwd, f.nativeArgs || []); break;
+    case 'switch': {
+      if (!f.checkpoint) throw new Error('--checkpoint FILE or - is required. Use switch-cli inside a managed CLI.');
+      const checkpoint = f.checkpoint === '-' ? JSON.parse(fs.readFileSync(0, 'utf8')) : JSON.parse(fs.readFileSync(f.checkpoint, 'utf8'));
+      output(await switchHandoff(providerName(f.provider), { ...f, cwd, checkpoint, target: p[0] })); break;
+    }
     case 'prepare': output(prepare(providerName(f.provider), cwd, f.session)); break;
     case 'export':
       if (!f.checkpoint) throw new Error('--checkpoint FILE is required. Run handoff prepare first.');

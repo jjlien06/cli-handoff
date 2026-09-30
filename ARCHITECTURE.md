@@ -1,14 +1,18 @@
 # CLI Handoff architecture
 
-Status: implemented first version. Working name: `handoff`.
+Status: implemented with same-terminal switching. Working name: `handoff`.
 
 ## Goal and scope
 
-Continue the same task between native Codex CLI and Claude Code sessions with one export action and one import action. Preserve available conversation history, explicit task state, and workspace evidence. Model behavior, hidden reasoning, native system prompts, permissions, and live processes cannot be transferred identically.
+Continue the same task between native Codex CLI and Claude Code sessions with one switch action inside a managed session. Preserve available conversation history, explicit task state, and workspace evidence. Model behavior, hidden reasoning, native system prompts, permissions, and live processes cannot be transferred identically.
 
 Version one targets switching on the same machine and in the same working directory. The installed versions inspected on 2026-09-29 are Codex CLI 0.159.0 and Claude Code 2.1.285. Support other versions through adapters and capability detection.
 
 ## User experience
+
+Start the native session once with `handoff start codex` or `handoff start claude`. Then use `$switch-cli` in Codex or `/switch-cli` in Claude: save, validate, close the source, and start the other CLI in the same terminal with automatic import. The same command switches back. Native trust and tool permission prompts remain in force.
+
+### Manual handoff between separate sessions
 
 1. Install with `handoff install` once. Install native skills and small lifecycle hooks, preserving existing configuration and recording an uninstall manifest. Show any native hook trust step required by the CLI.
 2. In the source conversation, invoke the export skill. Claude supports `/export-sync`; use the supported explicit skill invocation for the installed Codex version, with `$export-sync` as the compatibility spelling. Do not promise an identical slash command until verified in the native TUI.
@@ -96,7 +100,7 @@ Codex requires review and trust of non-managed hooks. Installation must expose t
 5. Test concrete failure cases: multiple sessions in one project, multiple tasks, interrupted writes, long/paginated history, stale workspace, missing attachments, compacted sessions, unavailable hooks, and incompatible CLI versions.
 6. Add optional automatic capture and terminal conveniences after manual handoff works reliably.
 
-Success means a single export action and a single import action for the normal case, exact source-session identification, preserved task lineage, accessible archived history, and explicit reporting of missing or stale context. It does not mean identical model reasoning or guaranteed obedience.
+Success means one switch action inside a managed session, exact source-session identification, preserved task lineage, accessible archived history, and explicit reporting of missing or stale context. It does not mean identical model reasoning or guaranteed obedience.
 
 ## Primary references
 
@@ -105,3 +109,13 @@ Success means a single export action and a single import action for the normal c
 - [Codex skills](https://learn.chatgpt.com/docs/build-skills): reusable native workflows.
 - [Claude Code skills](https://code.claude.com/docs/en/skills): slash invocation and native skill integration.
 - [Claude Code hooks](https://code.claude.com/docs/en/hooks): session and transcript identity and lifecycle integration.
+
+## Same-terminal controller
+
+`handoff start PROVIDER` runs a Python standard-library PTY controller. Native CLI rendering and keyboard input pass through unchanged. The controller owns only the child process group it creates; it never takes over arbitrary existing sessions.
+
+The native `switch-cli` skill sends a fresh structured checkpoint and its exact session ID to `handoff_switch`. The engine publishes and validates an immutable archive before atomically queuing a request. Each native launch receives a separate token and controller identity. Requests must match the active provider, token, workspace, and saved archive. Stale requests are rejected; export failure keeps the source open.
+
+The controller verifies the target executable, lets the tool response reach the source, cancels work and sends `/exit`, then terminates its owned group if needed. It restores the terminal display and starts the other native CLI with an explicit handoff import prompt. The receiving skill checks live files and acknowledges the handoff before continuing. Launching alone does not consume it. Provider-specific startup flags do not cross the handoff.
+
+Codex runs with `--no-daemon` and explicit MCP control environment overrides so a shared runtime cannot retain another launch's token. Claude inherits the control environment. Controller files use restrictive permissions and rotate on each switch. Terminal attributes are restored when the launcher exits. PTY tests run the real bridge with fixture native programs in both directions and verify save-before-close, automatic import, failed export survival, stale-token rejection, and terminal cleanup.

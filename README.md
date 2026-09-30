@@ -4,51 +4,41 @@ A local bridge for continuing the same task between native Codex CLI and Claude 
 
 ## Use it
 
-Open each CLI in the **same project directory**. After installation, start new sessions so they discover the skills.
-
-In Claude Code:
-
-```text
-/export-sync
-```
-
-In Codex, invoke the skill through its native picker:
-
-```text
-$export-sync
-```
-
-Then, in the other CLI:
-
-```text
-Continue from the synced conversation.
-```
-
-You can explicitly use `/import-sync` in Claude or `$import-sync` in Codex. If multiple tasks are available, provide the handoff ID shown by export. Export is deliberate: ordinary new conversations do not automatically resume unrelated work.
-
-In a new terminal tab, you can also run:
+Start your session from the project directory:
 
 ```sh
-cd /path/to/project
-handoff open claude
+handoff start codex
 # or
-handoff open codex
+handoff start claude
 ```
 
-This starts the original CLI in that tab with the handoff selected. It does not manipulate your terminal application.
+When you want to switch, run **one command inside your current CLI**:
+
+| Current CLI | Command |
+| --- | --- |
+| Codex | `$switch-cli` |
+| Claude Code | `/switch-cli` |
+
+The assistant saves its checkpoint, available conversation history, and workspace evidence. The launcher validates the archive, closes that CLI, and opens the other **in the same terminal** with the exact handoff selected. The receiving assistant imports it and continues. Use the same command to switch back.
+
+The launcher must own the session: an already-open CLI needs one relaunch through `handoff start`. Normal native permission or trust prompts may still appear. Saving takes as long as the source assistant needs to prepare its checkpoint and capture history.
+
+Pass native startup options after `--`, for example `handoff start codex -- --model MODEL`. Options apply only to that launch; provider-specific flags are not transferred.
+
+For separate tabs or unmanaged sessions, `/export-sync` in Claude or `$export-sync` in Codex still saves a handoff. In the other CLI, say “continue from the synced conversation,” use its `import-sync` skill, or run `handoff open claude [ID]` / `handoff open codex [ID]` from your shell.
 
 The assistant exporting the task sends a structured checkpoint with your goal, constraints, decisions, current work, next actions, outstanding questions, and test evidence through one local tool call. The receiving assistant reads it, checks live files, and binds its native session to the same task. A later export keeps the lineage and earlier history accessible.
 
 ## Install and remove
 
-Requires Node with native TypeScript support (Node 22.18+ or a supported later version), and the native CLIs on PATH. Tested with Codex 0.159.x and Claude Code 2.1.285 on macOS.
+Same-terminal switching requires macOS or Linux and Python 3 on PATH. Requires Node with native TypeScript support (Node 22.18+ or a supported later version), and the native CLIs on PATH. Tested with Codex 0.159.x and Claude Code 2.1.285 on macOS.
 
 ```sh
 node src/cli.ts install
 handoff doctor
 ```
 
-Installation adds `handoff` under `~/.local/bin`, export/import/status skills to each CLI's user skill directory, a local `cli-handoff` MCP server to both CLIs through their native configuration commands, and small session identity hooks. Existing settings are preserved. Put `~/.local/bin` on PATH if needed; skills also use the absolute executable path. Everything runs locally over stdio; there is no listening network server.
+Installation adds `handoff` under `~/.local/bin`, export/import/switch/status skills to each CLI's user skill directory, a local `cli-handoff` MCP server to both CLIs through their native configuration commands, and small session identity hooks. Existing settings are preserved. Put `~/.local/bin` on PATH if needed; skills also use the absolute executable path. Everything runs locally over stdio; there is no listening network server.
 
 **Optional Codex identity hooks require native trust:** open `/hooks` and trust the two handoff entries. Hook trust is never bypassed. Export/import also work without hooks through `CODEX_THREAD_ID` and Claude's native session placeholder. The connected local tools perform archive operations outside the model's shell sandbox. Normal native tool permission prompts still apply. If connected tools are unavailable, the skills fall back to executable commands; approve narrowly scoped archive writes if your sandbox requires it. `handoff open codex` requests the archive as an additional writable directory, subject to your active permission profile.
 
@@ -61,6 +51,8 @@ Uninstall removes owned hooks, unchanged MCP definitions, and unmodified generat
 ## Commands
 
 ```sh
+handoff start codex
+handoff start claude
 handoff status
 handoff doctor
 handoff sessions --provider codex
@@ -92,6 +84,6 @@ Data defaults to `~/.local/share/cli-handoff`. For isolated testing, set `HANDOF
 npm test
 ```
 
-Tests cover roundtrip lineage, constraint/history preservation, task ambiguity, workspace drift, archive integrity, incomplete records, credential path exclusions, pagination, locks, and reversible installation.
+Tests cover roundtrip lineage, constraint/history preservation, task ambiguity, workspace drift, archive integrity, incomplete records, credential path exclusions, pagination, locks, reversible installation, and real PTY roundtrips with fixture CLIs, failed exports, stale requests, and terminal restoration.
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the design.

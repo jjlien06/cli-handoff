@@ -2,10 +2,12 @@ import { createInterface } from 'node:readline';
 import { exportHandoff, importHandoff, acknowledge, historyText } from './engine.ts';
 import { providerName, sessions } from './adapters.ts';
 import { canonical, checkpointFields, index } from './store.ts';
+import { switchHandoff } from './switch.ts';
 
 const string = { type: 'string' };
 const checkpoint = { type: 'object', additionalProperties: false, required: ['title', 'goal', ...checkpointFields], properties: { title: string, goal: string, ...Object.fromEntries(checkpointFields.map(k => [k, { type: 'array', items: string }])) } };
 export const toolDefinitions = [
+  { name: 'handoff_switch', description: 'Save this exact conversation and task checkpoint, then switch to the other native CLI in this same terminal. Requires handoff start. The source closes only after the archive is published and validated. Stop working when this succeeds; the target will import automatically.', properties: { cwd: string, session: string, checkpoint, target: { type: 'string', enum: ['codex', 'claude'] } }, required: ['cwd', 'session', 'checkpoint'], readOnly: false },
   { name: 'handoff_export', description: 'Export this exact native conversation and a structured task checkpoint to the local handoff store. Preserve user constraints verbatim. Only pending questions belong in approvals. Use the current workspace and exact native session ID. Returns the handoff ID and target command.', properties: { cwd: string, session: string, checkpoint }, required: ['cwd', 'session', 'checkpoint'], readOnly: false },
   { name: 'handoff_import', description: 'Load a pending conversation handoff in the current workspace, including its checkpoint and workspace differences. If more than one task is pending, request an ID. Does not acknowledge or consume the handoff.', properties: { cwd: string, id: string }, required: ['cwd'], readOnly: true },
   { name: 'handoff_ack', description: 'After reading a handoff, bind this exact native session to the imported task and mark it loaded. Future exports maintain task lineage.', properties: { cwd: string, id: string, session: string }, required: ['cwd', 'id', 'session'], readOnly: false },
@@ -28,6 +30,7 @@ export async function callTool(provider: string, name: string, args: any) {
   }
   const cwd = canonical(args.cwd);
   switch (name) {
+    case 'handoff_switch': return await switchHandoff(provider, args);
     case 'handoff_export': return await exportHandoff({ ...args, provider, cwd });
     case 'handoff_import': return importHandoff(provider, cwd, args.id);
     case 'handoff_ack': return await acknowledge(provider, cwd, args.id, args.session);
@@ -53,7 +56,7 @@ export function serve(provider: string) {
       switch (message.method) {
         case 'initialize': {
           const requested = message.params?.protocolVersion;
-          result = { protocolVersion: ['2024-11-05', '2025-03-26', '2025-06-18', '2025-11-25'].includes(requested) ? requested : '2025-11-25', capabilities: { tools: { listChanged: false } }, serverInfo: { name: 'cli-handoff', version: '0.1.0' }, instructions: 'Use exact native session IDs and the current project directory. Capture and continue local conversation handoffs with explicit user intent.' }; break;
+          result = { protocolVersion: ['2024-11-05', '2025-03-26', '2025-06-18', '2025-11-25'].includes(requested) ? requested : '2025-11-25', capabilities: { tools: { listChanged: false } }, serverInfo: { name: 'cli-handoff', version: '0.2.0' }, instructions: 'Use exact native session IDs and the current project directory. Capture and continue local conversation handoffs with explicit user intent.' }; break;
         }
         case 'ping': result = {}; break;
         case 'tools/list': result = { tools: toolDefinitions }; break;

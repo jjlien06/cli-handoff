@@ -10,10 +10,11 @@ import { changes, snapshot } from '../src/evidence.ts';
 import { doctor, hook, install, uninstall } from '../src/integrations.ts';
 import { atomicJSON, checkpointFields, index, indexPath, locked, readJSON, selectRevision, validateCheckpoint } from '../src/store.ts';
 import { callTool, toolDefinitions } from '../src/mcp.ts';
+import { switchHandoff } from '../src/switch.ts';
 
 let base: string, cwd: string, checkpoint: string;
 let saved: Record<string, string | undefined>;
-const envKeys = ['HANDOFF_HOME', 'HANDOFF_DATA_DIR', 'CODEX_HOME', 'CODEX_THREAD_ID', 'CLAUDE_SESSION_ID'];
+const envKeys = ['HANDOFF_HOME', 'HANDOFF_DATA_DIR', 'CODEX_HOME', 'CODEX_THREAD_ID', 'CLAUDE_SESSION_ID', 'HANDOFF_CONTROL_FILE', 'HANDOFF_CONTROL_TOKEN'];
 function git(args: string[]) { const r = spawnSync('git', args, { cwd, encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); return r.stdout; }
 function fixture(provider: string, id: string, text: string, extra = '') {
   const file = path.join(base, provider + '-' + id + '.jsonl');
@@ -34,6 +35,7 @@ beforeEach(() => {
   base = fs.mkdtempSync(path.join(os.tmpdir(), 'handoff-test-')); cwd = path.join(base, 'project'); fs.mkdirSync(cwd);
   process.env.HANDOFF_HOME = path.join(base, 'home'); process.env.HANDOFF_DATA_DIR = path.join(base, 'data'); process.env.CODEX_HOME = path.join(base, 'home/.codex');
   delete process.env.CODEX_THREAD_ID; delete process.env.CLAUDE_SESSION_ID;
+  delete process.env.HANDOFF_CONTROL_FILE; delete process.env.HANDOFF_CONTROL_TOKEN;
   git(['init', '-q']); git(['config', 'user.email', 'fixture@example.invalid']); git(['config', 'user.name', 'Fixture']);
   fs.writeFileSync(path.join(cwd, 'app.txt'), 'original\n'); git(['add', '.']); git(['commit', '-qm', 'initial']);
   checkpoint = path.join(base, 'checkpoint.json');
@@ -202,4 +204,31 @@ test('divergent sessions on one task remain explicit choices rather than last-wr
   assert.equal(selectRevision(cwd, undefined, a.id).manifest.parentRevision, origin.id);
   assert.equal(selectRevision(cwd, undefined, b.id).manifest.parentRevision, origin.id);
   assert.throws(() => importHandoff('claude', cwd), /Choose a handoff ID/);
+});
+function controller(provider = 'claude') {
+  process.env.HANDOFF_CONTROL_FILE = path.join(base, 'controller.json');
+  process.env.HANDOFF_CONTROL_TOKEN = 'test-token';
+  atomicJSON(process.env.HANDOFF_CONTROL_FILE, { version: 1, token: 'test-token', cwd, provider, pid: process.pid, state: 'active' });
+  return process.env.HANDOFF_CONTROL_FILE;
+}
+test('switch publishes and validates a saved archive before queuing terminal transfer', async () => {
+  const file = controller();
+  const r = await switchHandoff('claude', { cwd, session: 'switch-source', checkpoint: readJSON(checkpoint), transcript: fixture('claude', 'switch-source', 'Keep constraints.') });
+  const request = readJSON(file + '.request');
+  assert.equal(request.handoff, r.id); assert.equal(request.target, 'codex');
+  assert.equal(selectRevision(cwd, 'codex', request.handoff).manifest.id, r.id);
+  assert.ok(!fs.existsSync(file + '.switch.lock'));
+});
+test('unmanaged or stale controllers cannot export or stop a native session', async () => {
+  const args = { cwd, session: 'switch-source', checkpoint: readJSON(checkpoint) };
+  await assert.rejects(switchHandoff('claude', args), /not launched by handoff start/);
+  const file = controller(); process.env.HANDOFF_CONTROL_TOKEN = 'stale-token';
+  await assert.rejects(switchHandoff('claude', args), /does not match/);
+  assert.equal(index(cwd).revisions.length, 0); assert.ok(!fs.existsSync(file + '.request'));
+});
+test('failed switch export keeps controller active and never queues shutdown', async () => {
+  const file = controller();
+  const c = readJSON(checkpoint); c.goal = '';
+  await assert.rejects(switchHandoff('claude', { cwd, session: 'a', checkpoint: c }), /nonempty goal/);
+  assert.equal(readJSON(file).state, 'active'); assert.ok(!fs.existsSync(file + '.request')); assert.ok(!fs.existsSync(file + '.switch.lock'));
 });
